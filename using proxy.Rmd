@@ -1,0 +1,177 @@
+---
+title: "proxy in R"
+author: "chenzhiming"
+date: '2024-10-9'
+documentclass: article
+---
+
+
+```{css echo = FALSE} 
+
+p {
+  font-size: 14px;
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: bold;
+  color: #7C1313
+}
+
+h2 {
+  font-size: 18px;
+  font-weight: bold;
+  color: #144676
+ 
+}
+
+h3 {
+  font-size: 16px;
+  font-weight: bold;
+  color: #144676
+ 
+}
+pre {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+pre[class] {
+  max-height: 200px;
+}
+
+.scroll-100 {
+  max-height: 200px;
+  overflow-y: auto;
+  background-color: inherit;
+}
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE,message = FALSE, class.output="scroll-100")
+ 
+##library(tidyverse) # Wickham的数据整理的整套工具
+##library(lubridate) # 日期和日期时间数据处理
+pdf.options(height=10/2.54, width=10/2.54, family="GB1") # 注意：此设置要放在最后
+```
+
+
+```{r echo=FALSE ,fig.width = 9,fig.height=3.83,dpi=300,dev="png"}
+source("../cover/cover.R")
+gen_cover(main ="R语言基础\nR语言爬虫",
+          subtitle = "基础工具\n设置网络代理",
+          label = "专注R语言原创分享",
+          bg_fig = "../cover/p_bg.png",
+          min_fig = "../cover/min_bg_2.png",
+          logo ="../cover/p_logo2.png")  %>% 
+  ggsave("final5.png",.,device = "png",width = 9,height = 3.83)
+
+library(tidyverse)
+ 
+```
+
+
+
+# 背景介绍
+ 
+ 因为网络设置等因素，我们有时候会需要使用ssr等网络代理工具。
+ 
+ 在PC,手机终端上管理这些代理是比较简单的。在R中实现起来则没有那么简单。
+ 
+ 如果不进行设置处理，就会出现电脑上的浏览器能正常浏览，但通过R 则无法访问的情形。
+ 
+ 比如我们在进行网络爬虫练习时，就可能会出现这样的情形。
+ 
+ 本文速记如何在R中进行代理设置，同时记录静态网站内容链接批量爬取(下载)的小案例。
+ 
+# r.proxy 包
+
+r.proxy 可以解决上述问题。
+
+## 正常安装及加载
+
+```{r}
+# install.packages("r.proxy")
+
+library(r.proxy)
+
+```
+
+
+##  运行r.proxy 包相关函数
+
+一般的代理IP 都是127.0.0.1:7890，直接默认即可
+
+```{r}
+r.proxy::proxy()
+```
+
+就这么简单。
+
+# 下载一些学习资料
+
+比如下载BBC learning English 上的英文学习材料
+
+## 加载包
+
+```{r}
+library(tidyverse)
+library(rvest)
+```
+
+## 获取对应内容链接
+
+```{r}
+easy_english_url_base <- "https://www.bbc.com/learningenglish/english/features/real-easy-english/"
+
+epi_url <- easy_english_url_base  %>% 
+  read_html(encoding = "utf-8") %>% 
+   html_elements("h2 a") %>% 
+   html_attr("href") %>% 
+  .[-1] %>% 
+  str_c("https://www.bbc.com",.)
+
+```
+
+## 写获取内容地址并下载的函数
+
+```{r eval=FALSE, include=TRUE}
+## 文本文件 
+ get_pdf <- function(url){
+   pdf_url <- read_html(url,
+                        encoding = "utf-8") %>% 
+     html_elements("a.download.bbcle-download-extension-pdf") %>% 
+     html_attr("href") 
+   
+   pdf_name <- str_extract(pdf_url,"RealEasyEnglish.+.pdf")
+   download.file(pdf_url,
+                 pdf_name,
+                 mode = "wb",
+                 quiet = FALSE)
+   
+ }
+ 
+## 音频文件
+ get_mp3 <- function(url){
+   
+   mp3_url <- read_html(url,
+                        encoding = "utf-8") %>% 
+     html_elements("a.download.bbcle-download-extension-mp3") %>% 
+     html_attr("href") 
+   
+   mp3_name <- str_extract(mp3_url,"RealEasyEnglish.+.mp3")
+   
+   download.file(mp3_url,
+                 mp3_name,
+                 mode = "wb",
+                 quiet = FALSE)
+   
+ }
+ 
+ walk(epi_url,~get_pdf(.x))
+ 
+ walk(epi_url,~get_mp3(.x))
+```
+
+
+非常简单的完成。

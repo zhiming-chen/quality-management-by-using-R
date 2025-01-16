@@ -1,0 +1,259 @@
+---
+title: "ARR analysis by using R"
+author: "chenzhiming"
+date: '2024-10-9'
+documentclass: article
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+##library(tidyverse) # Wickham的数据整理的整套工具
+##library(lubridate) # 日期和日期时间数据处理
+pdf.options(height=10/2.54, width=10/2.54, family="GB1") # 注意：此设置要放在最后
+```
+
+
+```{r echo=FALSE ,fig.width = 9,fig.height=3.83,dpi=300,dev="png"}
+source("../cover/cover.R")
+gen_cover(main ="高效质量管理\n基于R语言",
+          subtitle = "属性一致性分析(1)\nFleiss kappa \n统计量计算",
+          label = "专注R语言原创分享",
+          bg_fig = "../cover/p_bg.png",
+          min_fig = "../cover/min_bg_2.png",
+          logo ="../cover/p_logo2.png")  %>% 
+  ggsave("final4.png",.,device = "png",width = 9,height = 3.83)
+ 
+```
+
+
+
+# 背景介绍
+
+质量管理工作中，使用属性一致性分析(通常我们称之为ARR)对多个检验员给出的名义或顺序评级的一致性进行评估。测量值是人员给出的主观评级，而不是直接的实际测量值。比如：
+
+· 汽车性能评级
+
+· 织物质量分类，如“好”或“坏”
+
+· 葡萄酒色、香、味的评级（范围为 1 到 10）
+
+在这些情况下，难以定义和评估质量特征。要获得有意义的分类，应由多个检验员对响应度量进行分类。如果检验员意见一致，则评级有可能准确。如果检验员意见不一，则评级的有效性有限。
+
+属性一致性分析是评估检验员一致性的技术，它不同于属性量具研究（分析法），后者检查属性测量系统的偏倚和重复性。
+
+在质量管理工作实务中，通常使用Minitab来执行ARR 分析，也有很多公司生成了固定Excel模版，仅需工程技术人员输入检验结果，即可获得结果。
+
+本系列文章，使用R 语言来实现属性一致性分析，并生成函数，实现分析报告一键输出。显然，函数编写及调试验证的过程，也是对相关概念熟悉和深入理解的过程。
+
+计划分五篇文章写完这个系列：
+
+1.   标准未知情况下，Fleiss kappa 统计量计算
+
+2.   标准已知情况下，Fleiss kappa 统计量计算
+
+3.   Cohen Kappa 统计量 及 Kendall 系数计算
+
+4.   各类统计量及相关系数的显著性检验计算
+
+5.   不同场景需求下的通用性函数及其示例验证
+
+# 方法与原理概述
+
+(略) 
+
+其实是比较简单的理论逻辑，也只要把cohen kappa， fleiss kappa, kendall 系数这几个关键词搞明白就可以。
+
+# 试验概述与数据
+
+本系列文章使用Minitab 软件中的案例数据。
+
+> 一家纺织品印染公司的织物检验员为棉织物的印染质量评级，等级范围为 1 至 5 级。质量工程师想评估这些印染质量评级的一致性和正确性。该工程师让四位检验员对 50 件织物样本进行印染质量评级（按随机顺序）。
+
+# 执行分析
+
+结合案例实际情形，我们可使用fleiss kappa 值和 kendall 一致性、相关性系数来评估检验员的一致性。
+
+本文计算标准未知的情况下：
+
+1.  检验员自身多次检验结果的一致性；
+
+2.  检验员之间的一致性；
+
+3.  单个类别kapp值计算。
+
+
+R语言`irr`包中`kappam.fleiss`函数可以执行单次检验kappa值计算，但当出现重复检验时，其结果会因检验样本量计算等因素出现偏差。本文会进行案例说明。
+
+## 载入必要的包
+ 
+```{r}
+library(tidyverse)
+library(irr)
+ 
+```
+
+
+
+## 导入并处理原始数据
+
+简单生产可能需要的数据框,练习长宽数据转换。 基础数据中包含标准值。
+
+
+```{r}
+ 
+TextilePrintQuality <- read_csv("./data/TextilePrintQuality.csv",
+                                show_col_types = FALSE) %>% 
+    separate_wider_delim(cols = "Appraiser.Response.Sample.Trial.Standard",
+                         delim = ".",
+                         names = c("Appraiser","Response","Sample","Trial","Standard"),
+                         cols_remove = TRUE) %>% 
+    pivot_wider(id_cols = 1:3, names_from = Appraiser, values_from = Response) 
+ 
+TextilePrintQuality_wide <- TextilePrintQuality
+
+TextilePrintQuality_long <- TextilePrintQuality %>% pivot_longer(-(1:2),
+                                                                 names_to = "rater",
+                                                                 values_to = "result")
+
+TextilePrintQuality_long_withoutstandard <- TextilePrintQuality_long %>%  
+    filter(rater != "Standard")
+ 
+```
+
+## 简单示例：计算检验员多次之间的一致性(检验员自身)
+
+按照`kappam.fleiss` 函数输入数据格式要求，可执行该计算。
+
+```{r}
+# 以计算检验员 Mike 多次检验结果一致性为例：
+
+TextilePrintQuality_long_withoutstandard %>% 
+    filter(rater == "Mike") %>% 
+    pivot_wider(names_from = "Trial",values_from = "result") %>% 
+    select(3:4) %>% 
+    kappam.fleiss(detail = TRUE)
+ 
+```
+
+
+函数计算结果显示，Mike 对50个样品各执行了2次检验，Fleiss kappa值为0.875，同时提供了z值和p值。
+
+函数参数`detail`设置为`TRUE`时，同时提供各检验结果类别的kappa值。
+
+
+
+##  批量计算多位检验员多次之间的一致性(多位检验员自身)
+
+使用group_by()及group_map()函数,可实现批量计算多名检验员多次检验结果之间的一致性
+
+```{r}
+# 以计算检验员 Mike 多次检验结果一致性为例：
+
+TextilePrintQuality_long_withoutstandard %>% 
+group_by(rater) %>% 
+    pivot_wider(names_from = "Trial",values_from = "result") %>% 
+    select(3:4) %>% 
+    group_map(~ kappam.fleiss(.x,detail = TRUE))  
+ 
+```
+
+结果与Minitab 软件运行结果一致。
+
+
+
+##  计算多人之间的一致性(检验员之间)
+
+-  先使用`kappam.fleiss` 函数计算
+
+```{r}
+
+TextilePrintQuality_long_withoutstandard %>% 
+    pivot_wider(names_from = "rater",values_from = "result") %>% 
+    select(3:6) %>% 
+    kappam.fleiss(detail = TRUE)
+ 
+```
+
+运行结果可以看出，该函数未考虑重复测量的情形，重复测量结果被视为独立的样本，4名检验员对50个样本各进行2次检验，该函数视作4名检验员对100个样本进行一次检验。4名检验员一致性评估，fleiss.kappa 值为0.879，与minitab 运行结果0.8817存在偏差。
+
+
+导致上述偏差的原因在于该函数计算的Pe值时样本量翻倍，实验数减半，根据对应计算公式的计算结果出现偏差。
+
+##  自行计算多人之间一致性，并计算各检验类别kappa值
+
+根据fleiss.kappa 值计算公式，自行使用R语言计算对应kappa值。
+
+###  先确定常数
+
+```{r}
+#### 样本数
+n = unique(TextilePrintQuality_long_withoutstandard$Sample) %>% length()
+
+#### 测量人员数
+k = unique(TextilePrintQuality_long_withoutstandard$rater) %>% length()
+
+#### 测量次数
+r = unique(TextilePrintQuality_long_withoutstandard$Trial) %>% length()
+```
+
+###  编辑形成基础数据表
+
+
+```{r}
+
+tableBase <- 
+    TextilePrintQuality_long_withoutstandard %>% 
+    group_by(Sample,result) %>%
+    count() %>% 
+    mutate(alt_value = k*r-n,
+           mult_cons = n*alt_value) %>% 
+    ungroup() 
+```
+
+### 计算Pe及各类别K值
+
+```{r}
+tablePj <- tableBase %>%
+    group_by(result) %>% 
+        summarise(sum_n = sum(n),
+                  sum_mult_cons = sum(mult_cons)) %>% 
+    mutate(Pj = sum_n/sum(sum_n),
+           Kj = 1 -  sum_mult_cons/(n*k*r*(k*r-1)*Pj*(1-Pj)))
+
+Pe <-  sum(tablePj$Pj ^2) 
+```
+
+
+### 计算Po值
+
+```{r}
+ 
+### 计算各样本sumSQ
+sumSQ <-  sum(tableBase$n^2)
+
+### 计算Po值
+Po <- (sumSQ-n*k*r)/(n*k*r*(k*r-1))
+
+```
+
+### 计算K值
+
+```{r}
+## 4.3 计算K值
+K = (Po-Pe)/((1-Pe))
+
+```
+
+### 输出kappa值
+
+```{r}
+## 4.3 计算K值
+K
+
+tablePj$Kj
+```
+
+该结果与Minitab软件运行结果一致。
+
+
+本文完。

@@ -1,0 +1,640 @@
+---
+title: "pareto chart in R"
+author: "chenzhiming"
+date: "2024-10-9"
+output: word_document
+documentclass: article
+---
+
+
+```{css echo = FALSE} 
+
+p {
+  font-size: 14px;
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: bold;
+  color: #7C1313
+}
+
+h2 {
+  font-size: 18px;
+  font-weight: bold;
+  color: #144676
+ 
+}
+
+h3 {
+  font-size: 16px;
+  font-weight: bold;
+  color: #144676
+ 
+}
+pre {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+pre[class] {
+  max-height: 200px;
+}
+
+.scroll-100 {
+  max-height: 200px;
+  overflow-y: auto;
+  background-color: inherit;
+}
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE,message = FALSE, class.output="scroll-100")
+ 
+##library(tidyverse) # Wickham的数据整理的整套工具
+##library(lubridate) # 日期和日期时间数据处理
+pdf.options(height=10/2.54, width=10/2.54, family="GB1") # 注意：此设置要放在最后
+```
+
+
+```{r echo=FALSE ,fig.width = 9,fig.height=3.83,dpi=300,dev="png"}
+source("../cover/cover.R")
+gen_cover(main ="高效质量管理\n基于R语言",
+          subtitle = "基础质量工具\n 帕累托图绘制",
+          label = "专注R语言原创分享",
+          bg_fig = "../cover/p_bg.png",
+          min_fig = "../cover/min_bg_2.png",
+          logo ="../cover/p_logo2.png")  %>% 
+  ggsave("20241127.png",.,device = "png",width = 9,height = 3.83)
+
+library(tidyverse)
+ 
+```
+
+
+
+# 背景介绍
+
+持续进行高效质量管理相关素材内容准备。一直在纠结要不要在书中体现已经过时，或者被新工具取代的一些工具，考虑再三，还是花些时间做吧。 
+
+本文记录pareto图的绘制。
+
+pareto图，有人说成帕累托图，或者柏拉图，其实就是一种特殊类型的条形图加上点图和线图这几个基础图形组合起来的，带双Y坐标轴的一类图形。
+
+这类图是质量管理中的一种常见的图形。图中标绘的值按从大到小的顺序排列，以帮助工程技术人员或管理人员识别最常出现的缺陷、缺陷的最常见原因或客户投诉的最常见原因等，也是质量管理活动中的常用工具之一。
+
+这个图本身也没啥好说的，非常基础，不管是用于图形绘制的数据准备，图形绘制，以及图形结果解释，都非常基础。对于质量工程技术人员来讲，也是非常入门的基础内容。
+
+这个图和方法论很简单，但背后却是一个流传度和接受度很广的“二八原则”，其背后的故事来源于19世纪后期和20世纪初期，意大利经济学家Wilfredo Pareto尝试着运用数学分析理论来分析经济现象，Wilfredo Pareto假设国家的80%的财产由20%的人占有。尽管开始时使用这一理论研究社会问题，但随着时间的推移，20/80理论广泛运用于各个领域，这就是在传统的企业管理中人们常常提起的二八定律（或称20/80定律）。
+
+时代发展，社会变迁，也不知道如今这个二八原则是否依然成立，也不知道这个二八原则能否广义维度的指导大家的决策和行为。当然，这些不是本文的主要内容。
+
+很多软件都能绘制pareto图，本文记录使用R语言绘制柏拉图的过程。
+
+绘制函数支持如下功能：
+
+1.  支持数据表位于X轴标签下方，对齐呈现；
+
+2.  支持其他分类量化选择，比如通常低于95%的那些类别会被汇总记录为其他类别，用户可以自行选择这个数值；
+
+3.  支持带权重计算数据并绘制图形；
+
+4.  支持按变量分类的多级pareto图;(其实就是汇总及分面的逻辑，也方便用户进行改善前，改善后之类的比对，或者不同工厂，生产班组等之间的比对)
+
+5.  支持柱形图内填充缺陷图形的选项。(这个在质量管理实务中有需求。但图形可能会比较小，显示效果不一定能满足需求。通常，将图形作为X轴标签与类别描述放在一起，也是一种选项。)
+
+6.  支持图形立体化显示效果。(用于总结汇报材料？)
+
+
+#  简单示例
+
+##  数据准备及整理
+
+使用缺陷类别以向量的形式输入，没有分组，没有权重值，也没有进行计数统计，不使用其他来汇总占比小的缺陷类别，总之，就是最简单的内容。
+
+```{r}
+defects1 <- c(rep("E", 50), rep("B", 10), rep("F", 3), rep("A", 2),
+               rep("C",20), rep("D", 15))
+
+plot_data_base <- defects1 %>% 
+        as_tibble_col(column_name = "defects") %>% 
+   summarise(freq = n(), .by = defects) %>% 
+    arrange(-freq) %>%
+    mutate(total_freq = cumsum(freq),
+           percent = freq/sum(freq),
+           total_percent = (total_freq/sum(freq))) 
+
+plot_data_base <- plot_data_base %>% 
+    mutate( color = ifelse(total_percent<0.8,
+                          1,
+                          ifelse(lag(total_percent)< 0.8,
+                                     1,
+                                     0)
+                                 ))
+```
+
+
+##  绘制pareto 图
+
+```{r fig.width=6,fig.height=4,dpi=300}
+plot_data_base %>% 
+         ggplot(aes(x = reorder(defects, 
+                                total_percent),
+                  y = freq, 
+                  fill = as.factor(color),
+                  colour = as.factor(color),))+ ## 对前80% 占比的缺陷类别使用不同的颜色标识
+     geom_col(show.legend = F)+
+    geom_point(aes(y = total_freq),
+               show.legend = F,
+               color = "#9E0138")+
+    geom_line(aes(y = total_freq,
+                  group = 1 ),
+              color = "#9E0138",
+              show.legend = F)+
+    geom_text(aes(y = freq/2,
+                  label = freq),color = "black",size = 10)+
+        geom_text(aes(y = total_freq,
+                  label =  total_percent %>% scales::percent(accuracy = 0.01),
+                  # hjust = -0.05,
+                  vjust = 1),
+                  color = "black",size = 10)+
+    scale_fill_manual(values = c( "#C4B9FF", "#9E0138" ))+
+    scale_color_manual(values = c( "#C4B9FF", "#9E0138"))+
+    scale_y_continuous(name = "freq",
+                       sec.axis = sec_axis(~./(max(.)*.95),
+                                           name = "percent",
+                                           labels = scales::label_percent())) +
+    labs(title = "A base Pareto chart",x = "defects")+
+    theme_chen(base_size = 30,chinese = F) 
+# ggsave("./fig/1.base_pareto.png",device = "png",width = 6,height = 4,units = "in",dpi = 300)
+```
+
+#  考虑包含其他类别的情形
+
+当缺陷类别比较多，“琐碎的多数”部分内容我们往往不关心，可以指定一个百分比，通常为95%，将在此值之后的缺陷类别合并为其他。
+
+当然，如果累计缺陷比例排序后，累计比例大于95%(或其他指定值)的项数小于2，那设置其他也是没有意义的。
+
+
+## 数据准备及整理
+
+依然使用`defects1`基础数据
+ 
+```{r}
+defects1 <- c(rep("E", 50), rep("B", 10), rep("F", 3), rep("A", 2),
+               rep("C",20), rep("D", 15))
+
+plot_data_others <- defects1 %>% 
+        as_tibble_col(column_name = "defects") %>% 
+   summarise(freq = n(), .by = defects) %>% 
+    arrange(-freq) %>%
+    mutate(total_percent = (cumsum(freq)/sum(freq)),
+           defects = ifelse(total_percent<=0.95,
+                            defects,
+                            ifelse(lag(total_percent) < 0.95,
+                                   defects,
+                                   "others")
+                            )
+           ) %>% 
+    summarise(freq = sum(freq),.by = defects) %>% 
+           mutate(total_freq = cumsum(freq),
+           percent = freq/sum(freq),
+           total_percent = (total_freq/sum(freq)),
+           color = ifelse(total_percent<=0.8,
+                          1,
+                          ifelse(lag(total_percent)< 0.8,
+                                     1,
+                                     0)
+                                 )) 
+ 
+```
+ ##  绘制pareto图
+
+这个绘制图形和上节中的过程是一样的。
+
+```{r}
+plot_data_others %>% 
+         ggplot(aes(x = reorder(defects, 
+                                total_percent),
+                  y = freq, 
+                  fill = as.factor(color),
+                  colour = as.factor(color),))+ ## 对前80% 占比的缺陷类别使用不同的颜色标识
+     geom_col(show.legend = F)+
+    geom_point(aes(y = total_freq),
+               show.legend = F,
+               color = "#9E0138")+
+    geom_line(aes(y = total_freq,
+                  group = 1 ),
+              color = "#9E0138",
+              show.legend = F)+
+    geom_text(aes(y = freq/2,
+                  label = freq),color = "black",size = 10)+
+        geom_text(aes(y = total_freq,
+                  label =  total_percent %>% scales::percent(accuracy = 0.01),
+                  # hjust = -0.05,
+                  vjust = 1),
+                  color = "black",size = 10)+
+    scale_fill_manual(values = c( "#C4B9FF", "#9E0138" ))+
+    scale_color_manual(values = c( "#C4B9FF", "#9E0138"))+
+    scale_y_continuous(name = "freq",
+                       sec.axis = sec_axis(~./(max(.)*.95),
+                                           name = "percent",
+                                           labels = scales::label_percent())) +
+    labs(title = "A base Pareto chart",
+         subtitle = "Pareto chart with others label",
+         x = "defects")+
+    theme_chen(base_size = 30,chinese = F) 
+ggsave("./fig/2.others_pareto.png",device = "png",width = 6,height = 4,units = "in",dpi = 300)
+```
+
+# 考虑带权重的情形
+
+很多时候，考虑缺陷频率的同时，还需要考虑各缺陷的权重。比如在质量改进过程中，有些缺陷数量不大，但其经济价值很高，在制作pareto图形确定改进优先级时，可以将权重数据加进去进行评估。
+
+方法其实很简单，将上节案例中的频数乘以权重值即可。
+
+##  数据准备及整理
+
+依然使用上例数据，增加一个权重值
+
+这里需要注意的是，权重数据中缺陷类别需要包含在缺陷类别向量数据中。
+
+
+```{r}
+weight_defects1 <- tibble(defects = LETTERS[1:6],weight = c(48,40,2,66,8,16))
+
+defects1 <- c(rep("E", 50), rep("B", 10), rep("F", 3), rep("A", 2),
+               rep("C",20), rep("D", 15))
+
+ plot_data_weight <- defects1 %>% 
+        as_tibble_col(column_name = "defects") %>% 
+   summarise(freq = n(), .by = defects) %>% 
+         left_join(weight_defects1,by = join_by(defects)) %>% 
+     mutate(freq = freq * weight) %>% 
+     select(defects,freq) %>% 
+  #  这步以后，和上节的数据处理操作就一样了
+     
+     arrange(-freq) %>%
+    mutate(total_percent = (cumsum(freq)/sum(freq)),
+           defects = ifelse(total_percent<=0.95,
+                            defects,
+                            ifelse(lag(total_percent) < 0.95,
+                                   defects,
+                                   "others")
+                            )
+           ) %>% 
+    summarise(freq = sum(freq),.by = defects) %>% 
+           mutate(total_freq = cumsum(freq),
+           percent = freq/sum(freq),
+           total_percent = (total_freq/sum(freq)),
+           color = ifelse(total_percent<=0.8,
+                          1,
+                          ifelse(lag(total_percent)< 0.8,
+                                     1,
+                                     0)
+                                 )) 
+     
+
+```
+##  绘制pareto 图
+
+同样，这和上节绘制图形的方法过程是一致的。只是部分文字标签需要微调即可
+
+```{r}
+plot_data_weight %>% 
+         ggplot(aes(x = reorder(defects, 
+                                total_percent),
+                  y = freq, 
+                  fill = as.factor(color),
+                  colour = as.factor(color),))+ ## 对前80% 占比的缺陷类别使用不同的颜色标识
+     geom_col(show.legend = F)+
+    geom_point(aes(y = total_freq),
+               show.legend = F,
+               color = "#9E0138")+
+    geom_line(aes(y = total_freq,
+                  group = 1 ),
+              color = "#9E0138",
+              show.legend = F)+
+    geom_text(aes(y = freq/2,
+                  label = freq),color = "black",size = 10)+
+        geom_text(aes(y = total_freq,
+                  label =  total_percent %>% scales::percent(accuracy = 0.01),
+                  # hjust = -0.05,
+                  vjust = 1),
+                  color = "black",size = 10)+
+    scale_fill_manual(values = c( "#C4B9FF", "#9E0138" ))+
+    scale_color_manual(values = c( "#C4B9FF", "#9E0138"))+
+    scale_y_continuous(name = "frequence",
+                       sec.axis = sec_axis(~./(max(.)*.95),
+                                           name = "percent",
+                                           labels = scales::label_percent())) +
+    labs(title = "A base Pareto chart",
+         subtitle = "Pareto chart with weighted frequencies",
+         x = "defects")+
+    theme_chen(base_size = 30,chinese = F) 
+ggsave("./fig/3.weight_pareto.png",device = "png",width = 6,height = 4,units = "in",dpi = 300)
+```
+
+
+#  考虑有分组的情形
+
+pareto图可用于指导确定重点改进项目和方向，当然，也可以用于呈现改进前后的"效果对比",可以使用分组数据来呈现。
+
+用前几节中的案例数据，假设加权重前后的数据为对应缺陷类别的结果。设置两个分组：weighted 和unweighted.
+
+##  数据准备及整理
+
+```{r}
+ weight_defects1 <- tibble(defects = LETTERS[1:6],weight = c(48,40,2,66,8,16))
+
+defects1 <- c(rep("E", 50), rep("B", 10), rep("F", 3), rep("A", 2),
+               rep("C",20), rep("D", 15))
+
+defects_unweighted <- defects1 %>% as_tibble_col(column_name = "defects") %>% 
+    summarise(freq = n(),.by = defects) %>% 
+    add_column(group = "unweighted")
+
+defects_weighted <- defects_unweighted %>% 
+    left_join(weight_defects1,by = join_by(defects)) %>% 
+    mutate(freq = freq*weight,
+           group = "weighted") %>% 
+    select(defects,freq,group)
+
+#  基础数据整理完成。
+
+#  继续整理用于绘图的数据，因为涉及到分组，以及others项目标签的确定
+
+
+defects_group <- defects_unweighted %>% 
+    bind_rows(defects_weighted)%>%  # 组合加权数据与未加权数据
+        group_by(group) %>%  ## 分组计算各组分类占比，大于95% 占比的类别设置为“others”
+    arrange(-freq) %>% 
+    mutate(total_percent = (cumsum(freq)/sum(freq)),
+           defects = ifelse(total_percent<=0.95,
+                            defects,
+                            ifelse(lag(total_percent) < 0.95,
+                                   defects,
+                                   "others")
+                            )
+           ) %>% 
+    ungroup() %>% 
+    group_by(group,defects) %>% 
+        summarise(freq = sum(freq)) %>% 
+    arrange(-freq) %>% 
+    ## 确保分组分类顺序不因类别名相同而出现乱序的情形，需要强制排序。
+           mutate(defects = tidytext::reorder_within(defects, -freq, group),
+               total_freq = cumsum(freq),
+           percent = freq/sum(freq),
+           total_percent = (total_freq/sum(freq)),
+           color = ifelse(total_percent<=0.8,
+                          1,
+                          ifelse(lag(total_percent)< 0.8,
+                                     1,
+                                     0)
+                                 )) 
+     
+
+ 
+
+
+
+ 
+    
+```
+
+##  绘制分组pareto图
+
+因为涉及到分面处理，以前几节的步骤方法存在区别。
+
+```{r}
+defects_group %>% 
+    ggplot(aes(x = defects, 
+               y = freq,
+               fill = as.factor(color),
+               colour = as.factor(color)))+
+       facet_wrap(~group,ncol = 2,scales = "free") +
+   tidytext::scale_x_reordered()+
+    # 这几步处理好后，和之前绘图步骤一致即可。
+    theme_chen()+
+    geom_col(show.legend = F)+
+    geom_point(aes(y = total_freq),
+               show.legend = F,
+               color = "#9E0138")+
+    geom_line(aes(y = total_freq,
+                  group = 1 ),
+              color = "#9E0138",
+              show.legend = F)+
+    geom_text(aes(y = freq/2,
+                  label = freq),color = "black",size = 10)+
+        geom_text(aes(y = total_freq,
+                  label =  total_percent %>% scales::percent(accuracy = 0.01),
+                  # hjust = -0.05,
+                  vjust = 1),
+                  color = "black",size = 10)+
+    scale_fill_manual(values = c( "#C4B9FF", "#9E0138" ))+
+    scale_color_manual(values = c( "#C4B9FF", "#9E0138"))+
+    scale_y_continuous(name = "frequence",
+                       sec.axis = sec_axis(~./(max(.)*.95),
+                                           name = "percent",
+                                           labels = scales::label_percent())) +
+    labs(title = "A base Pareto chart",
+         subtitle = "Pareto chart with group",
+         x = "defects")
+    
+   
+ ggsave("./fig/4.group_pareto.png",device = "png",width = 12,height = 5,units = "in",dpi = 300)                  
+    
+```
+
+
+至此， 图形绘制完毕，还需做些带分面图形的基础设置处理即可，本文从略。
+
+
+#  样本数据准备
+
+##  情形一:缺陷类别向量作为输入
+
+这种情形下，数据需要进行分类计数处理
+
+```{r}
+# A:F六类缺陷类别
+defects1 <- c(rep("E", 50), rep("B", 10), rep("F", 3), rep("A", 2),
+               rep("C",20), rep("D", 15))
+
+defects_group <- readxl::read_xlsx("./data/pareto/sampledata.xlsx",sheet = "PaintFlaws.csv")
+
+```
+
+
+```{r}
+ table(defects1)
+ table(defects1)/length(defects1)
+ ftable(defects1)
+defects_group %>% 
+  group_by(Shift,Flaws) %>% 
+    tally() %>%
+    ungroup() %>% 
+    group_by(Shift) %>% 
+    arrange(-n,.by_group = T) %>% 
+ 
+    # filter(Shift == "Evening") %>% 
+    mutate(Flaws = fct_reorder2(Flaws,Shift,n)) %>%
+    ggplot()+
+    geom_col(aes( x =  interaction(Flaws,Shift,lex.order = F),
+                 y = n,
+                 fill = Shift) 
+
+ tibble(defects = c(rep("a",11),rep("b",8),rep("c",23),rep("d",18)),group = rep(LETTERS[3:1], 20)) %>% 
+    group_by(group,defects) %>% 
+    summarise(freq = n(),.groups = "drop_last") %>% 
+    arrange(freq,.by_group = T) %>% 
+     ggplot()+
+     geom_col(aes(x = fct_reorder2(defects,-freq), y = freq, fill = group))+
+     facet_wrap(.~group,ncol = 2, scales = "free_x")
+ 
+ 
+```
+
+
+
+```{r}
+
+plot_data1 <- defects_group %>% 
+    group_by(Shift, Flaws) %>% 
+    summarise(freq  = n()) %>% 
+    arrange(-freq,.by_group = T) %>%
+    ungroup() %>% 
+    mutate(
+        Flaws = tidytext::reorder_within(Flaws, -freq, Shift),
+           total_num = cumsum(freq),
+           percent = freq/sum(freq),
+           total_percent = (total_num/sum(freq)),.by = Shift,
+        max_num = max(total_num),
+        color = ifelse((1-total_percent)<0.20,"#9E0138", "#C4B9FF"))
+
+
+
+plot_data1 %>% 
+         ggplot(aes(x = Flaws, 
+                  y = freq, 
+                  fill = Flaws))+
+    facet_wrap(~Shift,ncol = 2,scales = "free")+
+     geom_col(show.legend = F,aes(fill = color))+
+    geom_point(aes(y = total_num,color = Flaws),show.legend = F)+
+    geom_line(aes(y = total_num,group = 1 ),show.legend = F)+
+    scale_fill_manual(values = c("#9E0138"="#9E0138", "#C4B9FF"="#C4B9FF"))+
+    scale_y_continuous(name = "ylab",
+                       sec.axis = sec_axis(~./(max(.)*.95),
+                                           name = "ylab2",
+                                           labels = scales::label_percent()))+
+     tidytext::scale_x_reordered()+
+    theme_chen()
+    
+   
+     ggsave("./fig/pareto.png",device = "png",width = 8,height = 6,units = "in",dpi = 300)
+
+ 
+```
+
+#  数据整理及绘图数据准备
+
+```{r}
+# 不考虑others 选项的情形 
+ 
+ # paretodata <- defects1 %>% 
+ #    as_tibble_col(column_name = "defects") %>% 
+ #   summarise(frequency = n(), .by = defects) %>% 
+ #    arrange(-frequency) %>%
+ #    mutate(cumsum = cumsum(frequency),
+ #           cumpercent = (cumsum/sum(frequency)) %>% 
+ #               scales::percent(accuracy = 0.01))
+
+
+paretodata <- defects1 %>% 
+    as_tibble_col(column_name = "defects") %>% 
+   summarise(frequency = n(), .by = defects) %>% 
+    arrange(-frequency) %>%
+    mutate(cumsum = cumsum(frequency),
+           cumpercent = (cumsum/sum(frequency)))
+
+#  考虑others的情形，默认95%
+others_value <- 0.95
+
+others_label <- "others"
+
+# 计算数据表中cumpercent值小于95%的个数
+m <- nrow(paretodata)
+n <- paretodata %>% 
+    filter(cumpercent < others_value) %>% 
+    nrow()
+ 
+# 如果m - n < = 2,则没有必要使用其他分类；因为按规则，我们会显示第一个累计百分比大于95的分类，也就是n+1 个分类，剩下的分类合并为其他，总共显示n+2个项目，如m-n<=2，则没有必要进行分类。
+
+#  也就是说，只有m-n>=3增加others的分类才有意义。
+
+#  其他类别行的数值
+
+
+# 选取n+1行,再加入剩下的行的累计值，其中percent为100%固定值。
+
+# 前n+1行
+
+main <- paretodata %>% 
+    slice(c(1:(n+1))) 
+
+# others 行 
+others <- paretodata %>% 
+    slice(m) %>% 
+    mutate(defects = others_label,
+           frequency = cumsum - main$cumsum[n+1])
+
+paretodata_others <- bind_rows(main,others) 
+freq
+ 
+```
+
+ 
+#  绘制鱼骨图(草稿状态)
+ 
+绘制的鱼骨图未添加箭头，文本外框等修饰元素。
+
+```{r}
+fb_final_df %>% 
+    ggplot() +
+
+    geom_segment(aes(x = x_start,
+                     y = y_start,
+                     xend = x_end,
+                     yend = y_end,colour = cause_gr_weight, linewidth = cause_gr_weight))+
+    geom_text(aes(x = cause_x_start+0.02,
+                  y = cause_y_start,
+                  label = causes,
+                  hjust = 0,
+                  color = cause_gr_weight),size = 8)+
+    geom_text(aes(x = x_end,
+                  y = ifelse(cause_gr_id%%2==0,y_end-0.01,y_end+0.01),
+                  label = casue_gr,
+                  hjust = 0.5,vjust =ifelse(cause_gr_id%%2==0,0.7,-0.7)),
+              color = "red",size = 10) +
+    geom_segment(aes(x = 0,y = 0, xend = 1, yend = 0),colour = "black",linewidth = 2)+     
+theme_void()+
+    theme(legend.position = "none") 
+    
+
+```
+
+图形中可以看出，5M1E大类因素的6根主线粗细不一，粗线代表其权重高，也就是说其重要程度，或者优先级要高，或者其严重度更高，需要优先解决。当然，后续这个粗线细线的排列位置也是可以进行约定的，粗线更靠近鱼头部分。
+
+其实对应颜色也可以进行定制，这些基础设置会在后续函数化的代码中进行体现。
+
+除了增加权重选项这个创新外，鱼骨图还可以根据输入提供summary，甚至提供一些关键建议，通过植入一些参数，形成所谓的专家系统级质量工具。
+
+显然，做不到人工智能，到基于已有的经验数据或成果，根据输入的内容是可以对鱼骨图进行适度解读并输出解读结果的。这是可以在鱼骨图的输出交付中体现的。
+
+
+```{r}
+library(rlist)
+people <- list.load("https://renkun-ken.github.io/rlist-tutorial/data/sample.json")
+```
+
+

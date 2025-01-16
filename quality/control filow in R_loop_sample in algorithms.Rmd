@@ -1,0 +1,270 @@
+---
+title: "control flow in R_loop"
+author: "chenzhiming"
+date: '2024-10-9'
+documentclass: article
+---
+
+
+```{css echo = FALSE} 
+
+p {
+  font-size: 14px;
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: bold;
+  color: #7C1313
+}
+
+h2 {
+  font-size: 18px;
+  font-weight: bold;
+  color: #144676
+ 
+}
+
+h3 {
+  font-size: 16px;
+  font-weight: bold;
+  color: #144676
+ 
+}
+pre {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+pre[class] {
+  max-height: 200px;
+}
+
+.scroll-100 {
+  max-height: 200px;
+  overflow-y: auto;
+  background-color: inherit;
+}
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE,message = FALSE, class.output="scroll-100")
+ 
+##library(tidyverse) # Wickham的数据整理的整套工具
+##library(lubridate) # 日期和日期时间数据处理
+pdf.options(height=10/2.54, width=10/2.54, family="GB1") # 注意：此设置要放在最后
+```
+
+
+```{r echo=FALSE ,fig.width = 9,fig.height=3.83,dpi=300,dev="png"}
+source("../cover/cover.R")
+gen_cover(main ="高效质量管理\n基于R语言",
+          subtitle = "R语言基础\n连续递增序列求解",
+          label = "专注R语言原创分享",
+          bg_fig = "../cover/p_bg.png",
+          min_fig = "../cover/min_bg_2.png",
+          logo ="../cover/p_logo2.png")  %>% 
+  ggsave("final5.png",.,device = "png",width = 9,height = 3.83)
+ 
+```
+
+
+
+# 背景介绍
+
+继续准备并记录基于R语言的高效质量管理相关内容。本文速记一个关于SPC 控制图判异准则实现相关的基础算法。
+
+有了这些基础函数或算法逻辑基础储备，后续做函数及绘制数据图表就比较轻松了。
+
+质量管理中的控制图中，有基于一定规则的异常点判定的方法论和思路。
+
+先不管实践中这种判异能带来多少价值，但作为一种方法论，他一直存在。存在即合理。
+
+Minitab软件里预制了8类选项，通常我们会选择其中部分或全部判断项，并根据实际情况对其中参数进行修订。
+
+规则有一项为连续6个(及以上)点全部递增或全部递减，如何在R中实现这一规则的识别并在控制图中实现呢？
+
+# R语言实现
+
+实现的方法挺多的。本文通过几个简单例子，进行速记。
+
+样本数据如下：
+
+```{r}
+testvalue <- c(1,45,3,7,5,78,120,123,124,125,126,127,32,34,45,67,98,120,167,234,12,34,2,4,1)
+```
+
+
+## 基础方法
+
+比较直观，但可能不优雅的做法就是增加辅助列的思维。
+
+对于长度为n的向量v[1:n],
+
+1. 使用diff()函数计算v[i+1]-v[i] (i in 2:n);
+
+2. 计算结果与0比较，正值取值1，负值取-1，使用sign()函数实现；
+
+3. 计算1和-1 连续出现的次数,使用rle()函数，得到两组数据，1和-1值以及对应的长度值。
+
+显然，对于本文所列规则:连续6个及以上点全部递增或递减；当长度值大于等于6时，即需做判异处理。
+
+通过长度值向量结果，能过比较便捷的找到对应异常点的位置。
+
+我们用样例数据来实现。
+
+ 
+```{r}
+
+# 加载包
+library(tidyverse)
+
+# 1.求差值
+rle_result <- diff(testvalue) %>% 
+
+# 2.对差值结果编码,递增1，递减-1       
+     sign() %>% 
+     
+# 3.计算连续递增/递减次数     
+     rle()
+
+```
+
+查看结果，lengths结果显示该数据出现两次连续7次递增/递减的情形，values结果显示两次均为递增的情形。
+
+我们对lengths数据进行累积求和，即能求得两次连续递增的起止点位置。
+
+```{r}
+rle_result$lengths %>% 
+    cumsum()
+```
+第一次连续上升始于第4位，结束于第11位；
+
+第二次连续上升始于第12位，结束于第19位；
+
+因为该数据相对原数据进行过一次diff()函数计算，原数据起始位置需增加1位。
+
+这个方法胜在基本不需要自己编写任何脚本，直接做调包侠调用函数即可实现基础功能，而且能够比较快速获取数据集中的异常数据集以及数据点。当数据集长度较大时，能省去很多人为统计识别的工作量。
+
+##  调用函数+自定义循环计算
+
+我们可以在上述方法思路的基础上，进行一些优化，以更直观的显示各个数据点的递增递减状态，并直接用于绘图。
+
+以testvalue为例，我们对其diff()函数求值后，在进行sign()处理，得到一组数据集S。
+
+根据S数据集的结果来确定testvalue数据集中各位置数据点连续上升/下降的次数，比如本例中，当次数大于等于6时，做特殊标记。
+
+下述代码实现上述功能，并函数化。
+
+```{r}
+get_violations_6 <- function(x){
+   # 非正式生产用函数。这里只做简单速记，不对输入x进行判断是否为向量，还是数据框，也不进行是否为数据型向量进行判断，默认数据符合要求。
+    S <- x %>% 
+         diff(.,lag = 1) %>% 
+         sign()
+    S <- c(0,S) #数据集第一位不参与连续递增递减比较，diff后的sign值补齐1位。
+    result = c()
+    result[1] = 0
+
+for (i in 2:length(S)){
+  if (S[i] == S[i-1]){
+    result[i] =  result[i-1] + 1
+  }else{
+    result[i] = 1
+  }
+}  
+violations_p = ifelse(result>=6,1,0)
+ df <- data.frame(value = x, 
+                   sign = S, 
+                   result = result,
+                  violations_p = violations_p)
+    
+    return(df)   
+}
+
+```
+
+现在，我们可以用上述函数进行数据图绘制了.
+
+```{r}
+plot_data <- get_violations_6(testvalue) 
+ 
+    ggplot(plot_data,aes(x = 1:nrow(plot_data),
+                         y = value))+
+    geom_point(aes(color = as.factor(- violations_p)),size = 3.5)+
+        geom_line(aes(group = 1),linewidth = 0.4) +
+        theme_void()+
+        theme(legend.position = "none",plot.background = element_rect(color = "blue"))
+```
+
+
+如图，第6，7个连续递增点被不同颜色标识出来了。
+
+这看上去也不是很复杂。
+
+
+##  R语言实现最长连续递增序列算法
+
+循着上述函数的思路和逻辑，我们其实可以实现最长连续递增序列，最长递增子序列等常见的算法题。只需要将上述函数中使用到的diff()函数和sign()用自己的语言编写一遍。
+
+但显然，从算法的角度来看，这不是最好的选择。
+
+本文延展开，记录用R语言手撸获取最长连续递增序列数，并返回序列值，同时，考虑在提供的数组中存在并列最大连续递增序列的情形，输出全量，也就是多组结果的情形。
+
++ 思路方法简单说明
+
+本质是比较简单的，找到一组数据V(1:n)中若干个满足连续递增(Vi,Vi+1,Vi+2...Vi+m) 也就是V[i+1]>v[i],那么这个m的最大值就是最长连续递增次数，或者说长度。
+
+我们假设第一个值的连续递增长度为1(也可以为0，就看怎么理解)，我们比较V[i] 与V[i-1]，如果结果是后者大于前者，对应位置的递增长度为上一位置数值数值递增长度+1，否则回到起点(0/1),依次循环，即可获得最大值及其所在的位置。
+
+下面撸一个函数来实现。
+
+```{r}
+
+LCIS <- function(input_data) {
+    result <- 1
+    t <- 1
+    n <- length(input_data)
+    list_p <- c()
+    list_p[1] <- 1
+    for (i in 2:n){
+        if (input_data[i]>input_data[i-1]){
+            t <- t+1
+            list_p[i] <- max(t,result)
+        } else
+        {t<- 1
+        list_p[i] <- t}
+    }
+    m <- max(list_p)
+     end_position <- which(list_p == m)
+     
+     output <- vector(mode = "list",length = length(end_position))
+     
+     # start_position <- end_position-max(list_p) +1
+  for (k in 1:length(end_position)){
+      output[[k]] <-input_data[(end_position[[k]]-m+1):end_position[[k]]]
+      
+ 
+  }
+
+    #  output <- vector(mode = "list",
+    #                   length = length(end_position))
+    # 
+    #  for(k in 1:length(end_position)){
+    # output[k] <- data[c((end_position[k]-max(list_p)+1):end_position[k])]
+    #    
+    #      }
+     return(list(output, paste0("length of longest continual increased series is ",m)))
+}
+LCIS(testvalue)
+```
+
+8个数字在最长连续递增序列中，这个序列有8个数值。但第一个值对比排在他前面的值是更小的，或者他前面没有数值。
+
+结果符合我们的预期。
+
+本文可算作之前发的一篇R语言控制流之循环文章的应用，也是R语言算法的基础内容实践，当然也是质量管理相关内容的基础。
+
+本文同时涉及到在R语言中对不同数据取子集的内容，下一篇文章会系统总结梳理一下，在R中取子集的常规做法，以及妙用取子集实现一些简单算法。
+
+

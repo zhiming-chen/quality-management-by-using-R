@@ -1,0 +1,497 @@
+---
+title: "ARR analysis by using R_2"
+author: "chenzhiming"
+date: '2024-10-9'
+documentclass: article
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+##library(tidyverse) # Wickham的数据整理的整套工具
+##library(lubridate) # 日期和日期时间数据处理
+pdf.options(height=10/2.54, width=10/2.54, family="GB1") # 注意：此设置要放在最后
+```
+
+
+```{r echo=FALSE ,fig.width = 9,fig.height=3.83,dpi=300,dev="png"}
+source("../cover/cover.R")
+gen_cover(main ="高效质量管理\n基于R语言",
+          subtitle = "属性一致性分析(2)\nFleiss kappa \n统计量计算",
+          label = "专注R语言原创分享",
+          bg_fig = "../cover/p_bg.png",
+          min_fig = "../cover/min_bg_2.png",
+          logo ="../cover/p_logo2.png")  %>% 
+  ggsave("final5.png",.,device = "png",width = 9,height = 3.83)
+ 
+```
+
+
+
+# 背景介绍
+
+质量管理工作中，使用属性一致性分析(通常我们称之为ARR)对多个检验员给出的名义或顺序评级的一致性进行评估。测量值是人员给出的主观评级，而不是直接的实际测量值。比如：
+
+· 汽车性能评级
+
+· 织物质量分类，如“好”或“坏”
+
+· 葡萄酒色、香、味的评级（范围为 1 到 10）
+
+在这些情况下，难以定义和评估质量特征。要获得有意义的分类，应由多个检验员对响应度量进行分类。如果检验员意见一致，则评级有可能准确。如果检验员意见不一，则评级的有效性有限。
+
+属性一致性分析是评估检验员一致性的技术，它不同于属性量具研究（分析法），后者检查属性测量系统的偏倚和重复性。
+
+在质量管理工作实务中，通常使用Minitab来执行ARR 分析，也有很多公司生成了固定Excel模版，仅需工程技术人员输入检验结果，即可获得结果。
+
+本系列文章，使用R 语言来实现属性一致性分析，并生成函数，实现分析报告一键输出。显然，函数编写及调试验证的过程，也是对相关概念熟悉和深入理解的过程。
+
+计划分五篇文章写完这个系列：
+
+1.   标准未知情况下，Fleiss kappa 统计量计算
+
+2.   标准已知情况下，Fleiss kappa 统计量计算
+
+3.   Cohen Kappa 统计量 及 Kendall 系数计算
+
+4.   各类统计量及相关系数的显著性检验计算
+
+5.   不同场景需求下的通用性函数及其示例验证
+
+# 方法与原理概述
+
+(略) 
+
+其实是比较简单的理论逻辑，只要把cohen kappa， fleiss kappa, kendall 系数这几个关键词搞明白就可以。
+
+# 试验概述与数据
+
+本系列文章使用Minitab 软件中的案例数据。
+
+> 一家纺织品印染公司的织物检验员为棉织物的印染质量评级，等级范围为 1 至 5 级。质量工程师想评估这些印染质量评级的一致性和正确性。该工程师让四位检验员对 50 件织物样本进行印染质量评级（按随机顺序）。
+
+# 执行分析
+
+上篇文章计算了标准未知的情况下fleiss.kappa值。本文计算标准已知的情况下，检验员检验结果与标准一致性情况，可以表征检验员检验结果的正确性。
+
+截至目前，没有看到现成的函数来计算检验员实验结果与已知标准的一致性。
+
+实际操作中，我们可以将已知标准作为一个试验结果，我们针对每个实验，都使用来自实验的评级与标准给定的评级进行计算kappa,计算中使用上文中未知标准的kappa公式来评估kappa。
+
+假设有m个实验，我们对m个实验重复进行上述计算；能得到m个整体kappa值和m个特定类别值的kappa值；
+
+那么，我们将这m个整体kappa值的平均值作为具有已知标准的整体kappa值；同样地，具有已知标准的特定类别的kappa 等于特定类别值的所有m个kappa的平均值。
+
+
+## 载入必要的包
+
+基于上述逻辑，我们将每次实验结果与标准结果进行kappa值计算，不涉及到上篇文章提及的重复测量的问题，可以使用`irr`包中的`kappam.fleiss` 函数进行计算。
+
+该函数结果以list形式输出，我们需要对list中数据进行提取并执行简单的均值计算。增加加载`rlist`包。
+
+
+
+```{r}
+library(tidyverse)
+library(irr)
+library(rlist)
+ 
+```
+
+
+
+```{r include=FALSE}
+ 
+TextilePrintQuality <- read_csv("./data/TextilePrintQuality.csv",
+                                show_col_types = FALSE) %>% 
+    separate_wider_delim(cols = "Appraiser.Response.Sample.Trial.Standard",
+                         delim = ".",
+                         names = c("Appraiser","Response","Sample","Trial","Standard"),
+                         cols_remove = TRUE) %>% 
+    pivot_wider(id_cols = 1:3, names_from = Appraiser, values_from = Response) 
+ 
+TextilePrintQuality_wide <- TextilePrintQuality
+
+TextilePrintQuality_long <- TextilePrintQuality %>% pivot_longer(-(1:2),
+                                                                 names_to = "rater",
+                                                                 values_to = "result")
+
+TextilePrintQuality_long_withoutstandard <- TextilePrintQuality_long %>%  
+    filter(rater != "Standard")
+ 
+```
+
+## 简单示例：计算单个检验员与标准 kappa 统计量
+
+
+基于上述逻辑，我们在上文的数据基础上，先执行一个简单示例。计算单个检验员(Mike)与标准一致性kappa值计算
+
+使用上文准备好的原始数据宽数据格式。
+
+
+计算之前，先确定几个后续需要使用到的常量
+
+-    检验结果类别数量，本例是5个；
+
+-    检验人员，本例是4人；
+ 
+
+```{r}
+cata <- unique(TextilePrintQuality_wide$Standard) %>% length()
+
+rater <- names(TextilePrintQuality_wide)[4:ncol(TextilePrintQuality_wide)]
+
+```
+
+对检验员与标准值执行kappa.fleiss 计算
+
+```{r}
+
+Mike_result <- TextilePrintQuality_wide %>%  ## 使用宽数据
+    select(Trial,Standard,Mike) %>%  # 选择实验次数，标准结果以及Mike 检验结果
+    group_by(Trial) %>%  # 试验次数分组，Mike执行了两次试验
+    group_map(~ kappam.fleiss(.x,detail = TRUE))  # 按试验次数分组执行kappa.fleiss 计算
+
+Mike_result
+
+```
+
+上述计算得到的结果存于list中，我们需要调取对应的value值均值作为Mike与标准之间的整体kappa值；
+
+同时，我们需要调取detail中类别1-5的均值，作为Mike与标准之间各类别的kappa值
+
+代码实现如下：
+    
+```{r} 
+
+# Mike与标准之间的整体kappa值
+kappa_MikevsStandard <-  
+Mike_result %>% 
+    list.mapv(.,value) %>% 
+    mean()
+
+kappa_MikevsStandard
+
+# Mike与标准之间的各类别评价整体kappa值
+
+kappa_MikeKj <- map(1:cata, ~ Mike_result %>% 
+        list.mapv(.,detail[,1][.x])  %>% 
+        mean()) %>% 
+    unlist()
+
+kappa_MikeKj
+```
+
+该结果与Minitab软件运行结果一致。
+
+
+## 批量执行多个检验员与标准 kappa 统计量计算
+
+
+对前文代码进行整合
+
+```{r}
+
+#  计算整体kappa值
+k <- TextilePrintQuality_wide %>%   
+    select(Trial,Standard,Mike) %>%   
+    group_by(Trial) %>%   
+    group_map(~ kappam.fleiss(.x,detail = TRUE)) %>% 
+    list.mapv(.,value) %>% 
+    mean()
+
+#  检验员与标准之间的各类别评价整体kappa值
+Kj <- map(1:cata, ~ TextilePrintQuality_wide %>%   
+    select(Trial,Standard,Mike) %>%   
+    group_by(Trial) %>%   
+    group_map(~ kappam.fleiss(.x,detail = TRUE)) %>% 
+        list.mapv(.,detail[,1][.x])  %>% 
+        mean()) %>% 
+    unlist()
+
+
+```
+
+将上述代码一般化，形成两个函数，用检验员对函数进行循环运行，即可得到多名检验员对应kappa值 
+
+```{r}
+get_kappa <- function(rater){
+    
+   k <-  TextilePrintQuality_wide %>%   
+    select(Trial,Standard,rater) %>%   
+    group_by(Trial) %>%   
+    group_map(~ kappam.fleiss(.x,detail = TRUE)) %>% 
+    list.mapv(.,value) %>% 
+    mean()
+   return(k)
+  }
+
+get_Kj <- function(rater){
+    
+ Kj <- map(1:cata, ~ TextilePrintQuality_wide %>%   
+    select(Trial,Standard,rater) %>%   
+    group_by(Trial) %>%   
+    group_map(~ kappam.fleiss(.x,detail = TRUE)) %>% 
+        list.mapv(.,detail[,1][.x])  %>% 
+        mean()) %>% 
+    unlist()
+   return(Kj)
+   }
+
+```
+
+计算各检验员与标准结果的kappa值以及对应各类别的kappa值
+
+```{r}
+map(rater, ~get_kappa(all_of(.x)))
+
+map(rater, ~get_Kj(all_of(.x)))
+```
+ 
+上述数据，与Minitab软件运行结果一致。
+
+备注：按计划，将在最后一篇文章进行分析报告输出方面的文字和代码组织，前面四篇文章更侧重计算结果的输出。
+
+至此，使用irr 包 kappam.fleiss 函数计算标准已知时属性一致性kappa值完成。
+
+接下来，不用现成包的函数来执行对应计算。
+
+思路1 ：将标准结果当做第五检验人员(他开了天眼，或提前知道了全部答案)，每个检验员与他进行比较，存在重复测量的情形；
+对n个样品执行k\*r(k:检验人员数，r:每名检验人员检验次数)检测，测量结果与标准结果进行kappa值计算(执行标准未知时kappa值计算公式)。 计算过程中，相关参数如下
+样本量n为实际样本量；如本例中为50；测试人员数为2(将标准结果视作开了天眼的一名检验员提供的...)，测试次数为2。
+ 
+ 
+
+ 
+
+这里使用上一篇文章准备好长数据。
+
+```{r}
+rater <- TextilePrintQuality_long$rater %>% 
+    unique() %>% 
+   setdiff(., "Standard")
+
+base_Mike <- TextilePrintQuality_long %>% 
+    filter(rater %in% c("Mike","Standard")) %>% 
+    group_by(Sample,result) %>% 
+    count() %>% 
+        mutate(alt_value = 2*2-n,
+           mult_cons = n*alt_value) %>% 
+    ungroup() 
+
+Kj_Mike <- base_Mike %>% 
+    group_by(result) %>% 
+        summarise(sum_n = sum(n),
+                  sum_mult_cons = sum(mult_cons)) %>% 
+    mutate(Pj = sum_n/sum(sum_n),
+           Kj = 1 -  sum_mult_cons/(50*2*2*(2*2-1)*Pj*(1-Pj)))
+
+Pe <-  sum(Kj_Mike$Pj ^2) 
+
+
+sumSQ <-  sum(base_Mike$n^2)
+
+### 计算Po值
+Po <- (sumSQ-50*2*2)/(50*2*2*(2*2-1))
+
+K = (Po-Pe)/((1-Pe))
+
+K
+
+Kj_Mike$Kj
+
+```
+
+结果显示，与Minitab软件运行结果存在极为细微的区别。但方法论与Minitab软件是不一样的；此方法未有求均值的过程，直观的将标准结果提供者作为实验者进行对比，包括对应的重复测量次数。
+
+
+思路2：将标准结果当做第五检验人员(他开了天眼，或提前知道了全部答案)，每个检验员每次检测结果与其进行比较，不存在重复测量的情形；亦即严格按照Minitab软件采用的方法实施。
+
+对n个样品执行k\*r(k:检验人员数，r:每名检验人员检验次数)检测，测量结果与标准结果进行kappa值计算(执行标准未知时kappa值计算公式)。 计算过程中，相关参数如下
+样本量n为实际样本量；如本例中为50；测试人员数为2(将标准结果视作开了天眼的一名检验员提供的...)，测试次数为1；对应结果取均值得到整体kappa值。
+
+### 整理基础数据
+```{r}
+raw_table <- TextilePrintQuality_long %>%  
+    mutate(rating_No = str_c(rater,Trial,sep = "_")) %>%  # 生成 rater*trial 字段，表征检验次数的唯一性
+    filter(rating_No != "Standard_2") # 删除一组重复标准值
+```
+
+
+### 计算一组数据结果(某个检验员单次检验结果与标准值)
+
+
+```{r}
+base <- raw_table  %>% 
+    filter(rating_No %in% c("Mike_1","Standard_1")) %>% 
+    group_by(Sample,result) %>% 
+    count() %>% 
+        mutate(alt_value = 2*1-n,
+           mult_cons = n*alt_value) %>% 
+    ungroup() 
+
+Kj <- base %>% 
+    group_by(result) %>% 
+        summarise(sum_n = sum(n),
+                  sum_mult_cons = sum(mult_cons)) %>% 
+    mutate(Pj = sum_n/sum(sum_n),
+           Kj = 1 - sum_mult_cons/(50*2*1*(2*1-1)*Pj*(1-Pj)))
+
+Pe <-  sum(Kj$Pj ^2) 
+
+
+sumSQ <-  sum(base$n^2)
+
+### 计算Po值
+Po <- (sumSQ-50*2*1)/(50*2*1*(2*1-1))
+
+K = (Po-Pe)/((1-Pe))
+
+K
+
+Kj$Kj
+```
+
+该运行结果与Minitab软件运行结果，以及本文中使用irr包中kappam.fleiss函数运行结果一致。
+
+将上述运行代码一般化处理，形成一个函数，对rating_no 参数执行循环运算，即可得到全量数据，再行按需求执行各检验员和/或整体kappa值的均值计算即可。
+
+为方便展示，总体kappa值与各类别kappa值分开写函数。其实是可以放在一起的，分别交付不同的dataframe而已。
+
+本文中涉及的函数，均为基于本例原始数据的函数，非通用函数，亦即，未对输入数据进行定义识别。
+
+
+### 获取整体kappa值
+```{r}
+
+get_k <- function(rating_no){ 
+    base <- raw_table  %>% 
+    filter(rating_No %in% c(rating_no,"Standard_1")) %>% 
+    group_by(Sample,result) %>% 
+    count() %>% 
+        mutate(alt_value = 2*1-n,
+           mult_cons = n*alt_value) %>% 
+    ungroup() 
+
+Kj <- base %>% 
+    group_by(result) %>% 
+        summarise(sum_n = sum(n),
+                  sum_mult_cons = sum(mult_cons)) %>% 
+    mutate(Pj = sum_n/sum(sum_n))
+
+Pe <-  sum(Kj$Pj ^2) 
+
+sumSQ <-  sum(base$n^2)
+
+### 计算Po值
+Po <- (sumSQ-50*2*1)/(50*2*1*(2*1-1))
+K = (Po-Pe)/((1-Pe))
+
+kappa_value <- data.frame(rating_no = rating_no, kappa = K)
+return(kappa_value)
+}
+
+```
+
+### 获取各类别kappa值
+
+```{r}
+
+get_kappa_kj <- function(rating_no){ 
+    base <- raw_table  %>% 
+    filter(rating_No %in% c(rating_no,"Standard_1")) %>% 
+    group_by(Sample,result) %>% 
+    count() %>% 
+        mutate(alt_value = 2*1-n,
+           mult_cons = n*alt_value) %>% 
+    ungroup() 
+
+Kj <- base %>% 
+    group_by(result) %>% 
+        summarise(sum_n = sum(n),
+                  sum_mult_cons = sum(mult_cons)) %>% 
+    mutate(Pj = sum_n/sum(sum_n),
+           Kj = 1 - sum_mult_cons/(50*2*1*(2*1-1)*Pj*(1-Pj)))
+
+kappa_kj <-Kj %>% 
+    select(result,Kj)
+kappa_kj$rating_no <- rating_no
+
+return(kappa_kj)
+}
+```
+
+
+# 计算结果
+
+```{r}
+
+rating_no <- raw_table$rating_No %>% 
+    unique() %>% 
+    setdiff(., "Standard_1")
+
+# 计算整体kappa值
+
+k_table <- map_dfr(rating_no, ~get_k(.x))
+
+
+# 计算各分类kappa值
+kj_table <- map_dfr(rating_no, ~get_kappa_kj (.x))
+
+```
+
+有了这些技术数据表，就可以轻松自如的进行分组求均值获取结果了。
+
+```{r}
+# 各检验员与标准一致性 fleiss kappa值
+k_overall <- k_table %>% 
+    # 提取检验员
+    mutate(rater = str_extract(rating_no,"[a-zA-Z]+")) %>% 
+    # 对检验员分组求kappa均值
+    summarise(kappa  = mean(kappa),.by = rater) 
+
+  k_overall$result <- "overall"  
+  
+ k_overall <-  relocate(k_overall, result, .after = rater)
+ 
+  
+ # 各检验员与标准一致性 各类别fleiss kappa值
+k_kj <- kj_table %>% 
+    # 提取检验员
+    mutate(rater = str_extract(rating_no,"[a-zA-Z]+"))%>% 
+    group_by(rater, result) %>% 
+    # 对检验员分组求kappa均值
+    summarise(kappa = mean(Kj))
+
+
+bind_rows(k_overall,k_kj) %>% 
+    arrange(rater,result)
+ 
+
+```
+
+至此，完成计算及结果输出。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
